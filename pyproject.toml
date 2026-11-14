@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grace-canvas"
+version = "0.2.0"
+description = "Grace's vector drawing engine: action language, SVG renderer, stroke dynamics and palette harmonization"
+requires-python = ">=3.10"
+
+[project.scripts]
+canvas = "canvas.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
