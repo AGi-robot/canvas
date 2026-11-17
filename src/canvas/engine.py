@@ -211,7 +211,7 @@ def validate_actions(actions, *, allow_image_layers=False):
                 item['gradient_stops'].append({'offset': offset, 'color': color})
                 previous = offset
         if action['kind'] != 'style' or 'fill' in action:
-            item['fill'] = action.get('fill') is True
+            item['fill'] = action.get('fill', action['kind'] == 'polygon') is True
         if action['kind'] in ('curve', 'path', 'polygon', 'erase', 'line'):
             points = action.get('points')
             if not isinstance(points, list) or not 1 <= len(points) <= 2000:
