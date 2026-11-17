@@ -5,6 +5,7 @@ of actions, this module validates and normalises them, and `canvas.svg`
 renders them as SVG.  Extra action kinds (e.g. raster painting) can register
 themselves with `register_action_kind` - the core language stays free of them.
 """
+import copy
 import json
 import math
 import re
@@ -26,8 +27,8 @@ _CORE_PROPERTIES = {
             'x': {'type': 'number'}, 'y': {'type': 'number'},
             'width': {'type': 'number'}, 'height': {'type': 'number'},
             'dx': {'type': 'number'}, 'dy': {'type': 'number'},
-            'color': {'type': 'string', 'description': 'Stroke or text color, #RRGGBB; choose deliberately for each object'},
-            'fill_color': {'type': 'string', 'description': 'Separate interior color, #RRGGBB'},
+            'color': {'type': 'string', 'description': 'Explicit #RRGGBB stroke or text color. Set this for visible outlines and text.'},
+            'fill_color': {'type': 'string', 'description': 'Explicit #RRGGBB interior paint. Set this whenever fill=true.'},
             'gradient_color': {'type': 'string', 'description': 'Second fill color, #RRGGBB'},
             'gradient': {'type': 'string', 'enum': ['none', 'linear', 'radial']},
             'gradient_angle': {'type': 'number', 'minimum': 0, 'maximum': 360, 'description': 'Linear gradient direction in degrees; 0=left to right, 90=top to bottom'},
@@ -39,14 +40,15 @@ _CORE_PROPERTIES = {
             'font': {'type': 'string', 'enum': ['sans', 'serif', 'mono', 'handwritten']},
             'brush': {'type': 'string', 'enum': ['ink', 'soft', 'marker']},
             'opacity': {'type': 'number', 'minimum': 0, 'maximum': 1},
-            'stroke': {'type': 'boolean', 'description': 'False suppresses outlines on filled contours and shapes'},
+            'stroke': {'type': 'boolean', 'description': 'False suppresses outlines on filled contours and shapes; set fill_color for the interior'},
             'smooth': {'type': 'boolean', 'description': 'Round a path or polygon contour with quadratic curves'},
             'size': {'type': 'number', 'description': 'Brush width or font size in pixels'},
-            'text': {'type': 'string'}, 'fill': {'type': 'boolean'},
+            'text': {'type': 'string'},
+            'fill': {'type': 'boolean', 'description': 'For a painted shape, set true and provide an explicit fill_color (#RRGGBB).'},
             'margin': {'type': 'number', 'description': 'Letter page margin in pixels, 0–100 (default 40)'},
             'line_height': {'type': 'number', 'description': 'Letter line spacing, 1–2 (default 1.5)'},
             'align': {'type': 'string', 'enum': ['left', 'center', 'right']},
-            'points': {'type': 'array', 'description': 'Curve: start followed by control1, control2, endpoint for each cubic segment; max 31 points per pass. Other paths: connected points.', 'maxItems': 31, 'items': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}},
+            'points': {'type': 'array', 'description': 'For curve: exactly 4, 7, 10, 13, 16, 19, 22, 25, 28, or 31 points: start, then groups of control1, control2, endpoint. Other path kinds use connected [x,y] points.', 'maxItems': 31, 'items': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 2, 'maxItems': 2}},
         },
         'required': ['kind'], 'additionalProperties': False,
     }
@@ -117,7 +119,9 @@ repeating similar geometry. Use the available output budget for a complete, vali
 
 Pick colors appropriate to the request: muted earths, botanical greens, warm skin tones,
 rose, coral, lavender, teal or jewel tones. Respect requested monochrome palettes too.
-Use explicit hex colors; color is the outline/text, fill_color the interior. Paint shadows
+Every visible painted object must use explicit hex colors: set fill=true and fill_color for
+filled shapes, and set color for visible outlines and text. Color is the outline/text;
+fill_color is the interior. Paint shadows
 with darker/cooler hues and highlights with lighter/warmer hues from a consistent direction.
 Set fill=true, stroke=false for painted silhouettes. Use sparse outlines for line art.
 Gradient linear or radial blends fill_color to gradient_color; gradient_stops optionally
@@ -207,13 +211,13 @@ def validate_actions(actions, *, allow_image_layers=False):
                 item['gradient_stops'].append({'offset': offset, 'color': color})
                 previous = offset
         if action['kind'] != 'style' or 'fill' in action:
-            item['fill'] = action.get('fill') is True
+            item['fill'] = action.get('fill', action['kind'] == 'polygon') is True
         if action['kind'] in ('curve', 'path', 'polygon', 'erase', 'line'):
             points = action.get('points')
             if not isinstance(points, list) or not 1 <= len(points) <= 2000:
                 raise ValueError('Expected 1 to 2000 points')
-            if action['kind'] == 'curve' and (not 4 <= len(points) <= 61 or (len(points) - 1) % 3):
-                raise ValueError('Curve needs a start and triples of cubic control/end points, max 61')
+            if action['kind'] == 'curve' and (not 4 <= len(points) <= 31 or (len(points) - 1) % 3):
+                raise ValueError('Curve needs 4, 7, 10, 13, 16, 19, 22, 25, 28, or 31 points (start plus cubic control/end triples)')
             item['points'] = []
             for point in points:
                 if not isinstance(point, list) or len(point) != 2 or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in point):
@@ -245,31 +249,111 @@ def validate_actions(actions, *, allow_image_layers=False):
 
 
 def repair_model_actions(actions):
-    """Downgrade malformed model curves to smooth paths and coerce common
-    paint-field slips so one bad shape won't abort art."""
+    """Repair common model slips independently so one bad action can't void a drawing.
+
+    Valid actions are returned unchanged. Malformed actions get a small set of
+    lossless or obvious repairs, then are validated on their own; actions that
+    still fail validation are dropped. The public action-count limit remains
+    strict so oversized model dumps are not silently truncated into drawings.
+    """
+    if not isinstance(actions, list) or not 1 <= len(actions) <= 100:
+        return []
+
     repaired = []
-    for action in actions:
-        if not isinstance(action, dict):
+    scalar_fields = ('opacity', 'size', 'x', 'y', 'width', 'height', 'dx', 'dy',
+                     'margin', 'line_height', 'gradient_angle')
+
+    def number(value):
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return value if math.isfinite(value) else None
+        if isinstance(value, str):
+            try:
+                parsed = float(value)
+            except ValueError:
+                return None
+            return parsed if math.isfinite(parsed) else None
+        return None
+
+    for original in actions:
+        if not isinstance(original, dict):
             continue
-        if action.get('kind') not in KINDS:
+        if original.get('kind') not in KINDS:
             continue
-        action = dict(action)
+
+        # Do not rewrite valid input. Apart from avoiding needless output
+        # churn, this preserves model-supplied fields byte-for-byte.
+        try:
+            validate_actions([original])
+        except Exception:
+            pass
+        else:
+            repaired.append(original)
+            continue
+
+        action = copy.deepcopy(original)
         for name in ('stroke', 'fill', 'smooth'):
             if name in action and not isinstance(action[name], bool):
                 value = action[name]
                 action[name] = (value in (True, 1, 'true', 'True', '1')
                                 if isinstance(value, (str, int)) else False)
-        for name in ('opacity', 'size', 'x', 'y', 'width', 'height', 'dx', 'dy'):
-            if name in action and isinstance(action[name], str):
-                try:
-                    action[name] = float(action[name])
-                except ValueError:
-                    action.pop(name)
+
+        # Some models put a coordinate pair in one scalar field (for example,
+        # x=[58, 175] with no y). Interpret that pair as [x, y]. For all other
+        # numeric list slips, keep the first usable scalar and let validation
+        # reject it if no safe interpretation exists.
+        for name in scalar_fields:
+            if name not in action:
+                continue
+            value = action[name]
+            if name in ('x', 'y') and isinstance(value, (list, tuple)):
+                pair = [number(v) for v in value[:2]]
+                pair = [v for v in pair if v is not None]
+                if len(pair) >= 2:
+                    if name == 'x':
+                        action[name] = pair[0]
+                        action.setdefault('y', pair[1])
+                    else:
+                        action.setdefault('x', pair[0])
+                        action[name] = pair[1]
+                    continue
+                value = value[0] if value else None
+            parsed = number(value)
+            if parsed is None:
+                action.pop(name)
+            else:
+                action[name] = parsed
+
+        if (action.get('kind') == 'line'
+                and (not isinstance(action.get('points'), list)
+                     or not action.get('points'))):
+            x, y = number(action.get('x')), number(action.get('y'))
+            x2, y2 = number(action.get('x2')), number(action.get('y2'))
+            if x is not None and y is not None:
+                if x2 is not None and y2 is not None:
+                    end = [x2, y2]
+                else:
+                    dx = number(action.get('dx'))
+                    dy = number(action.get('dy'))
+                    width = number(action.get('width'))
+                    height = number(action.get('height'))
+                    end = [x + (dx if dx is not None else (width or 0)),
+                           y + (dy if dy is not None else (height or 0))]
+                action['points'] = [[x, y], end]
+                for name in ('x2', 'y2', 'x', 'y', 'width', 'height', 'dx', 'dy'):
+                    action.pop(name, None)
+
         if (action.get('kind') == 'curve'
                 and isinstance(action.get('points'), list)
-                and (not 4 <= len(action['points']) <= 61 or (len(action['points']) - 1) % 3)):
+                and (not 4 <= len(action['points']) <= 31 or (len(action['points']) - 1) % 3)):
             action = {**action, 'kind': 'path', 'smooth': True}
-        repaired.append(action)
+
+        try:
+            normalized = validate_actions([action])
+        except Exception:
+            continue
+        repaired.extend(normalized)
     return repaired
 
 

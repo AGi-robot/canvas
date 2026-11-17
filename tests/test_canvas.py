@@ -41,6 +41,59 @@ def test_repair_downgrades_bad_curves():
     assert repaired[0]['kind'] == 'path'
 
 
+def test_poison_action_does_not_discard_valid_shapes():
+    good = {'kind': 'ellipse', 'id': 'apple', 'x': 200, 'y': 200,
+            'width': 200, 'height': 180, 'fill': True, 'fill_color': '#cc2222'}
+    actions = [good, {'kind': 'ellipse', 'color': 'invalid'},
+               {'kind': 'ellipse', 'x': [58, 175], 'width': 20, 'height': 30}]
+    repaired = repair_model_actions(actions)
+    assert repaired[0] == good
+    assert len(repaired) == 2
+    assert (repaired[1]['x'], repaired[1]['y']) == (58, 175)
+    assert 'fill="#cc2222"' in render(repaired)
+
+
+def test_repaired_line_and_oversized_batch():
+    actions = [{'kind': 'line', 'x': 10, 'y': 20, 'dx': 30, 'dy': 40}]
+    assert repair_model_actions(actions)[0]['points'] == [[10, 20], [40, 60]]
+    assert repair_model_actions(actions * 101) == []
+
+
+def test_polygon_auto_fill_survives_validation():
+    action = {'kind': 'polygon', 'points': [[0, 0], [100, 0], [50, 100]],
+              'fill_color': '#cc2222', 'stroke': False}
+    assert validate_actions([action])[0]['fill'] is True
+    assert 'fill="#cc2222"' in render([action])
+    assert 'fill="none"' in render([{**action, 'fill': False}])
+
+
+def test_style_edit_preserves_seed_geometry_and_fill():
+    from canvas.svg import Renderer
+    seed = {'kind': 'polygon', 'id': 'leaf',
+            'points': [[0, 0], [100, 0], [50, 100]], 'fill_color': '#335522'}
+    renderer = Renderer()
+    for action in validate_actions([seed, {'kind': 'style', 'id': 'leaf',
+                                         'fill_color': '#75b987'}]):
+        renderer.apply(action)
+    assert len(renderer.objects) == 1
+    assert renderer.objects[0]['points'] == seed['points']
+    assert renderer.objects[0]['fill'] is True
+    assert 'fill="#75b987"' in renderer.to_svg()
+
+
+@pytest.mark.parametrize('count', [4, 7, 10, 31])
+def test_curve_grammar_accepts_valid_counts(count):
+    validate_actions([{'kind': 'curve', 'points': [[0, 0]] * count}])
+
+
+@pytest.mark.parametrize('count', [3, 5, 6, 32, 34])
+def test_curve_grammar_repairs_invalid_counts(count):
+    action = {'kind': 'curve', 'points': [[0, 0]] * count}
+    with pytest.raises(ValueError):
+        validate_actions([action])
+    assert repair_model_actions([action])[0]['kind'] == 'path'
+
+
 # --------------------------------------------------------- rendering -------
 APPLE = [
     {'kind': 'curve', 'points': [[300, 400], [220, 280], [270, 160], [380, 140],
