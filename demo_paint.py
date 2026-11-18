@@ -169,7 +169,7 @@ def review_pass(actions, draft_png):
 
 def main():
     from pathlib import Path
-    demo = Path("/home/oppa-ai/AGi/canvas/demo")
+    demo = Path(__file__).resolve().parent / "demo"
     demo.mkdir(exist_ok=True)
 
     print("== pass 1: draft ==")
