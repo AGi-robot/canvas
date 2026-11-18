@@ -83,15 +83,17 @@ class Renderer:
 
     def apply(self, action):
         kind = action['kind']
-        if kind in ('undo', 'redo', 'select'):
-            if kind == 'undo':
-                if self._undo:
-                    self._redo.append(self.objects)
-                    self.objects = self._undo.pop()
-            else:
-                if self._redo:
-                    self._undo.append(self.objects)
-                    self.objects = self._redo.pop()
+        if kind == 'select':
+            return  # Selection has no effect on a rendered SVG.
+        if kind == 'undo':
+            if self._undo:
+                self._redo.append(self.objects)
+                self.objects = self._undo.pop()
+            return
+        if kind == 'redo':
+            if self._redo:
+                self._undo.append(self.objects)
+                self.objects = self._redo.pop()
             return
         if kind == 'clear':
             self._snapshot()
