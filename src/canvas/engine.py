@@ -244,32 +244,99 @@ def validate_actions(actions, *, allow_image_layers=False):
     return result
 
 
-def repair_model_actions(actions):
-    """Downgrade malformed model curves to smooth paths and coerce common
-    paint-field slips so one bad shape won't abort art."""
-    repaired = []
-    for action in actions:
-        if not isinstance(action, dict):
+def _first_number(value):
+    """First finite number of a list, else None. Models sometimes emit a
+    range (e.g. x=[58, 175]) where a scalar belongs; the minimum is the
+    sanest single value, and anything beats aborting the whole scene."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value if math.isfinite(value) else None
+    if isinstance(value, list) and value:
+        return _first_number(value[0])
+    return None
+
+
+def _clean_points(points):
+    """Drop malformed points, keep [x, y] finite pairs (clamped later)."""
+    clean = []
+    for p in points or []:
+        if (isinstance(p, list) and len(p) == 2
+                and all(isinstance(v, (int, float))
+                        and not isinstance(v, bool) and math.isfinite(v)
+                        for v in p)):
+            clean.append([p[0], p[1]])
+    return clean
+
+
+def _coerce_action(action):
+    """Best-effort per-action coercions. Returns a new dict, or None when the
+    action is unsalvageable and should be dropped (keeping the rest)."""
+    if not isinstance(action, dict):
+        return None
+    if action.get('kind') not in KINDS:
+        return None
+    action = dict(action)
+    for name in ('stroke', 'fill', 'smooth'):
+        if name in action and not isinstance(action[name], bool):
+            value = action[name]
+            action[name] = (value in (True, 1, 'true', 'True', '1')
+                            if isinstance(value, (str, int)) else False)
+    for name in ('opacity', 'size', 'x', 'y', 'width', 'height', 'dx', 'dy'):
+        if name not in action:
             continue
-        if action.get('kind') not in KINDS:
-            continue
-        action = dict(action)
-        for name in ('stroke', 'fill', 'smooth'):
-            if name in action and not isinstance(action[name], bool):
-                value = action[name]
-                action[name] = (value in (True, 1, 'true', 'True', '1')
-                                if isinstance(value, (str, int)) else False)
-        for name in ('opacity', 'size', 'x', 'y', 'width', 'height', 'dx', 'dy'):
-            if name in action and isinstance(action[name], str):
-                try:
-                    action[name] = float(action[name])
-                except ValueError:
-                    action.pop(name)
-        if (action.get('kind') == 'curve'
-                and isinstance(action.get('points'), list)
-                and (not 4 <= len(action['points']) <= 61 or (len(action['points']) - 1) % 3)):
+        if isinstance(action[name], str):
+            try:
+                action[name] = float(action[name])
+                continue
+            except ValueError:
+                pass
+        if not isinstance(action[name], (int, float)) or isinstance(action[name], bool):
+            num = _first_number(action[name])
+            if num is None:
+                action.pop(name, None)
+            else:
+                action[name] = num
+    kind = action.get('kind')
+    if kind in ('curve', 'path', 'polygon', 'erase', 'line'):
+        points = _clean_points(action.get('points'))
+        if kind == 'line' and not points:
+            # Models consistently emit lines rect-style (x/y/width/height)
+            # despite the prompt saying two points; honour the intent.
+            try:
+                x = float(action.get('x', 0))
+                y = float(action.get('y', 0))
+                w = float(action.get('width', 0))
+                h = float(action.get('height', 0))
+            except (TypeError, ValueError):
+                return None
+            points = [[x, y], [x + w, y + h]]
+        if kind == 'curve' and (not 4 <= len(points) <= 61 or (len(points) - 1) % 3):
+            # Downgrade malformed curves to smooth paths (legacy behaviour).
             action = {**action, 'kind': 'path', 'smooth': True}
-        repaired.append(action)
+        action['points'] = points
+    return action
+
+
+def repair_model_actions(actions):
+    """Per-action repair: coerce what can be coerced, drop what cannot.
+
+    Previously a single malformed action aborted the whole scene (the
+    validator is all-or-nothing, and anything the coercions missed made the
+    re-validation raise, yielding an empty list). Now each action is
+    validated on its own: survivors are kept in order, poison actions are
+    dropped. Valid input passes through unchanged.
+    """
+    repaired = []
+    for action in actions or []:
+        fixed = _coerce_action(action)
+        if fixed is None:
+            continue
+        try:
+            validate_actions([fixed])
+        except Exception:
+            continue
+        repaired.append(fixed)
     return repaired
 
 
