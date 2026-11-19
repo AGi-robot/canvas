@@ -104,7 +104,6 @@ def ensure_paint(actions, mood='warm'):
         kind = action.get('kind')
         if kind in ('curve', 'path', 'polygon', 'line', 'rectangle', 'ellipse', 'text', 'letter'):
             wants_fill = action.get('fill', kind == 'polygon') or kind in ('rectangle', 'ellipse')
-            wants_stroke = action.get('stroke') is not False
             if wants_fill and not action.get('fill_color'):
                 action['fill_color'] = colors[index % len(colors)]
                 index += 1

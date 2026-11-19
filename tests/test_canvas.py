@@ -1,4 +1,6 @@
-import re
+
+import subprocess
+import sys
 
 import pytest
 
@@ -17,7 +19,9 @@ def test_core_kinds_present():
 
 
 def test_image_kind_absent_until_registered():
-    assert 'image' not in KINDS
+    # Other suites can register Imaging during collection; inspect a fresh process.
+    subprocess.run([sys.executable, '-c',
+                    "from canvas import KINDS; assert 'image' not in KINDS"], check=True)
 
 
 def test_register_and_unregister_semantics():
@@ -156,8 +160,6 @@ def test_undo_restores_previous_state():
 def test_taper_outline_is_closed_and_wider_in_middle():
     pts = [[0, 0], [100, 0]]
     outline = stroke_mod.taper_outline(pts, base=10, taper=0.6)
-    xs = [p[0] for p in outline]
-    assert outline[0] != outline[-1] or True  # closed loop by construction
     # near the ends the outline must be narrower than at the middle
     end_top = min(p[1] for p in outline if p[0] < 5)
     mid_top = min(p[1] for p in outline if 45 < p[0] < 55)
