@@ -8,7 +8,6 @@ Two passes, like Grace's real loop:
 No imagegen anywhere - the drawing is 100% vector, 100% local.
 """
 import base64
-import io
 import json
 import re
 import subprocess

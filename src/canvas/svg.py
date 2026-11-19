@@ -15,7 +15,6 @@ The renderer is deterministic: same actions, same SVG.
 import math
 import re
 
-from .engine import KINDS
 from . import stroke as _stroke
 
 HEX_RE = re.compile(r'#[0-9a-fA-F]{6}')
