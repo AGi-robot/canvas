@@ -87,6 +87,55 @@ def build_draw_tool():
     }}
 
 
+def build_draw_schema(action_limit=16, allow_paints=False, strict_geometry=True):
+    """Build the shared production/eval schema without mutating the action registry."""
+    schema = copy.deepcopy(build_draw_tool()["function"]["parameters"])
+    schema["properties"]["actions"]["maxItems"] = action_limit
+    schema["properties"]["actions"]["items"]["required"] = ["kind", "color",
+                                                           "fill_color"]
+    if not allow_paints:
+        kind_enum = schema["properties"]["actions"]["items"]["properties"]["kind"]["enum"]
+        if "image" in kind_enum:
+            kind_enum.remove("image")
+        schema["properties"]["actions"]["items"]["properties"].pop("prompt", None)
+    schema["required"] = ["actions", "more", "response"]
+    if strict_geometry:
+        item = schema["properties"]["actions"]["items"]
+        variants = []
+        for kind in item["properties"]["kind"]["enum"]:
+            variant = json.loads(json.dumps(item))
+            props = variant["properties"]
+            props["kind"] = {"type": "string", "enum": [kind]}
+            for name in ("color", "fill_color", "gradient_color"):
+                props[name]["pattern"] = "^#[0-9a-fA-F]{6}$"
+            props["id"].update({"minLength": 1, "maxLength": 64})
+            # llama.cpp's grammar orders object keys by schema order. Put
+            # paint before geometry so choosing a color cannot skip coordinates.
+            order = ["kind", "id", "color", "fill_color", "fill", "stroke"]
+            variant["properties"] = {k: props[k] for k in order if k in props}
+            variant["properties"].update({k: v for k, v in props.items() if k not in order})
+            required = ["kind", "id", "color", "fill_color"]
+            if kind in ("rectangle", "ellipse", "image", "text", "letter"):
+                required += ["x", "y"]
+            if kind in ("rectangle", "ellipse", "image"):
+                required += ["width", "height", "fill", "stroke"]
+                props["width"]["minimum"] = 1
+                props["height"]["minimum"] = 1
+            if kind in ("curve", "path", "polygon", "line", "erase"):
+                required += ["points", "fill", "stroke"]
+                props["points"]["minItems"] = 4 if kind == "curve" else (3 if kind == "polygon" else 2)
+                if kind == "line":
+                    props["points"]["maxItems"] = 2
+            if kind in ("text", "letter"):
+                required += ["text"]
+            if kind == "move":
+                required += ["dx", "dy"]
+            variant["required"] = required
+            variants.append(variant)
+        schema["properties"]["actions"]["items"] = {"anyOf": variants}
+    return schema
+
+
 DRAW_TOOL = build_draw_tool()
 DRAW_INSTRUCTIONS = '''You are Grace, creating finished art on a 1000×650 canvas with canvas_draw.
 Plan the composition, palette and light source before drawing. Work back to front: background,
@@ -133,6 +182,10 @@ Each point is [x,y]; 1+3n points, at most 31 per new contour. Fill closes the co
 {"kind":"curve","points":[[300,400],[220,280],[270,160],[380,140],[400,240],[370,340],[300,400]],"fill":true,"stroke":false,"fill_color":"#648c55"}.
 Every curve must have exactly 4, 7, 10, …, 31 points per new contour. If unsure, use a smooth path instead.
 Path/polygon join points, smooth=true rounds corners. Polygon fills automatically.
+Every action needs a stable id and explicit hex color and fill_color, never "none" or
+"transparent". Use stroke=false to hide an outline. Rectangle/ellipse need explicit
+x,y,width,height with positive dimensions; a full-canvas backdrop is x=0,y=0,width=1000,
+height=650. Use polygon for silhouette corners; curve points are cubic controls.
 Line uses two points. Rectangle/ellipse use x,y,width,height. Keep all geometry in bounds,
 usually inside x=35..965, y=30..620, except an intentional full-canvas background.
 A portrait needs a coherent head, neck and shoulders, paired eyes/brows, nose and mouth;

@@ -8,5 +8,6 @@ setup(
     python_requires=">=3.10",
     package_dir={"": "src"},
     packages=find_namespace_packages(where="src"),
+    extras_require={"test": ["pytest", "jsonschema"]},
     entry_points={"console_scripts": ["canvas = canvas.cli:main"]},
 )

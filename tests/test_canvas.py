@@ -246,3 +246,33 @@ def test_svg_is_parseable():
 def test_render_validates_by_default():
     with pytest.raises(ValueError):
         render([{'kind': 'nonsense'}])
+
+
+def test_production_geometry_schema_rejects_missing_geometry_and_invalid_paints():
+    import copy
+    import jsonschema
+    from canvas.engine import build_draw_schema, ACTION_SCHEMA
+    original = copy.deepcopy(ACTION_SCHEMA)
+    schema = build_draw_schema(10)
+    action = {'kind': 'ellipse', 'id': 'apple', 'color': '#cc2222',
+              'fill_color': '#cc2222', 'x': 100, 'y': 100, 'width': 200,
+              'height': 180, 'fill': True, 'stroke': False}
+    payload = {'actions': [action], 'more': False, 'response': 'An apple.'}
+    jsonschema.validate(payload, schema)
+    for field in ('id', 'width', 'height', 'x', 'points'):
+        bad = copy.deepcopy(payload)
+        if field == 'points':
+            bad['actions'][0] = dict(action, kind='line', points=[[1, 2]])
+        else:
+            del bad['actions'][0][field]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+    for color in ('none', 'transparent', 'red'):
+        bad = copy.deepcopy(payload)
+        bad['actions'][0]['color'] = color
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+    jsonschema.validate({'actions': [{'kind': 'delete', 'id': 'apple',
+        'color': '#cc2222', 'fill_color': '#cc2222'}], 'more': False, 'response': 'Removed.'}, schema)
+    assert ACTION_SCHEMA == original
+    assert schema['properties']['actions']['maxItems'] == 10

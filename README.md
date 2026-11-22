@@ -36,3 +36,10 @@ Omit the input filename or use `-` to read standard input. Output goes to
 standard output unless `-o` is supplied. `canvas render --no-grain` omits the
 paper grain overlay. Invalid input returns exit status 2 with an error on stderr.
 The same commands are available as `python -m canvas.cli`.
+
+
+The production drawing adapter and eval share `build_draw_schema`, which defaults
+to stable IDs, explicit hex paints, positive dimensions and kind-specific
+geometry. `DRAW_TOOL` remains the extensible action-language definition for
+clients that build their own schema. Install test dependencies with
+`pip install -e '.[test]'` and run `pytest`.
