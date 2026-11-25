@@ -38,8 +38,11 @@ paper grain overlay. Invalid input returns exit status 2 with an error on stderr
 The same commands are available as `python -m canvas.cli`.
 
 
-The production drawing adapter and eval share `build_draw_schema`, which defaults
-to stable IDs, explicit hex paints, positive dimensions and kind-specific
-geometry. `DRAW_TOOL` remains the extensible action-language definition for
-clients that build their own schema. Install test dependencies with
+The production drawing adapter and eval share `build_draw_schema`. Both strict
+and loose schemas require the geometry needed to draw each action. Strict mode
+also requires stable IDs and explicit fill/stroke choices for shapes; loose mode
+allows IDs and paint values on new objects to be omitted. Edit operations always
+require a target ID, and any supplied colors must be hex. `DRAW_TOOL` remains the
+extensible action-language definition for clients that build their own schema.
+Install test dependencies with
 `pip install -e '.[test]'` and run `pytest`.
