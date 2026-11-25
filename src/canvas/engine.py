@@ -88,51 +88,78 @@ def build_draw_tool():
 
 
 def build_draw_schema(action_limit=16, allow_paints=False, strict_geometry=True):
-    """Build the shared production/eval schema without mutating the action registry."""
+    """Build a drawable per-kind schema without mutating the action registry.
+
+    Both modes require the geometry needed to make a visible object. The loose
+    mode leaves paint defaults and IDs for new objects optional; strict mode
+    additionally requires stable IDs and explicit fill/stroke choices for new
+    shapes. Edit operations always require their target ID.
+    """
     schema = copy.deepcopy(build_draw_tool()["function"]["parameters"])
     schema["properties"]["actions"]["maxItems"] = action_limit
-    schema["properties"]["actions"]["items"]["required"] = ["kind", "color",
-                                                           "fill_color"]
+    base_item = schema["properties"]["actions"]["items"]
     if not allow_paints:
-        kind_enum = schema["properties"]["actions"]["items"]["properties"]["kind"]["enum"]
+        kind_enum = base_item["properties"]["kind"]["enum"]
         if "image" in kind_enum:
             kind_enum.remove("image")
-        schema["properties"]["actions"]["items"]["properties"].pop("prompt", None)
+        base_item["properties"].pop("prompt", None)
     schema["required"] = ["actions", "more", "response"]
-    if strict_geometry:
-        item = schema["properties"]["actions"]["items"]
-        variants = []
-        for kind in item["properties"]["kind"]["enum"]:
-            variant = json.loads(json.dumps(item))
-            props = variant["properties"]
-            props["kind"] = {"type": "string", "enum": [kind]}
-            for name in ("color", "fill_color", "gradient_color"):
-                props[name]["pattern"] = "^#[0-9a-fA-F]{6}$"
+
+    variants = []
+    drawable = {"curve", "path", "polygon", "line", "erase", "rectangle",
+                "ellipse", "text", "letter", "image"}
+    edit_by_id = {"select", "move", "delete", "style", "front", "back"}
+    for kind in base_item["properties"]["kind"]["enum"]:
+        variant = copy.deepcopy(base_item)
+        props = variant["properties"]
+        props["kind"] = {"type": "string", "enum": [kind]}
+        for name in ("color", "fill_color", "gradient_color"):
+            props[name]["pattern"] = "^#[0-9a-fA-F]{6}$"
+
+        required = ["kind"]
+        if kind in {"curve", "path", "polygon", "line", "erase"}:
+            points = props["points"]
+            minimum = {"curve": 4, "path": 2, "polygon": 3,
+                       "line": 2, "erase": 2}[kind]
+            points["minItems"] = minimum
+            if kind == "line":
+                points["maxItems"] = 2
+            required.append("points")
+        elif kind in {"rectangle", "ellipse", "image"}:
+            for name in ("width", "height"):
+                props[name]["minimum"] = 1
+            required += ["x", "y", "width", "height"]
+        elif kind == "text":
+            required += ["x", "y", "text"]
+        elif kind == "letter":
+            required.append("text")
+
+        if kind in edit_by_id:
+            required.append("id")
+        elif strict_geometry and kind in drawable:
+            required.append("id")
+
+        if kind == "move":
+            required += ["dx", "dy"]
+
+        if strict_geometry:
             props["id"].update({"minLength": 1, "maxLength": 64})
-            # llama.cpp's grammar orders object keys by schema order. Put
-            # paint before geometry so choosing a color cannot skip coordinates.
-            order = ["kind", "id", "color", "fill_color", "fill", "stroke"]
-            variant["properties"] = {k: props[k] for k in order if k in props}
-            variant["properties"].update({k: v for k, v in props.items() if k not in order})
-            required = ["kind", "id", "color", "fill_color"]
-            if kind in ("rectangle", "ellipse", "image", "text", "letter"):
-                required += ["x", "y"]
-            if kind in ("rectangle", "ellipse", "image"):
-                required += ["width", "height", "fill", "stroke"]
-                props["width"]["minimum"] = 1
-                props["height"]["minimum"] = 1
-            if kind in ("curve", "path", "polygon", "line", "erase"):
-                required += ["points", "fill", "stroke"]
-                props["points"]["minItems"] = 4 if kind == "curve" else (3 if kind == "polygon" else 2)
-                if kind == "line":
-                    props["points"]["maxItems"] = 2
-            if kind in ("text", "letter"):
-                required += ["text"]
-            if kind == "move":
-                required += ["dx", "dy"]
-            variant["required"] = required
-            variants.append(variant)
-        schema["properties"]["actions"]["items"] = {"anyOf": variants}
+            if kind in {"curve", "path", "polygon", "rectangle", "ellipse"}:
+                required += ["fill", "stroke"]
+            elif kind == "line":
+                required.append("stroke")
+
+        # Retain optional fields for backwards compatibility, but only require
+        # fields that make this action drawable or executable. Put required
+        # geometry early in schema order for constrained decoders.
+        ordered = ["kind", "id", "color", "fill_color", "fill", "stroke"]
+        variant["properties"] = {name: props[name] for name in ordered if name in props}
+        variant["properties"].update({name: value for name, value in props.items()
+                                       if name not in variant["properties"]})
+        variant["required"] = required
+        variants.append(variant)
+
+    schema["properties"]["actions"]["items"] = {"anyOf": variants}
     return schema
 
 
@@ -182,10 +209,14 @@ Each point is [x,y]; 1+3n points, at most 31 per new contour. Fill closes the co
 {"kind":"curve","points":[[300,400],[220,280],[270,160],[380,140],[400,240],[370,340],[300,400]],"fill":true,"stroke":false,"fill_color":"#648c55"}.
 Every curve must have exactly 4, 7, 10, …, 31 points per new contour. If unsure, use a smooth path instead.
 Path/polygon join points, smooth=true rounds corners. Polygon fills automatically.
-Every action needs a stable id and explicit hex color and fill_color, never "none" or
-"transparent". Use stroke=false to hide an outline. Rectangle/ellipse need explicit
-x,y,width,height with positive dimensions; a full-canvas backdrop is x=0,y=0,width=1000,
-height=650. Use polygon for silhouette corners; curve points are cubic controls.
+Give new objects short, meaningful ids so later passes can edit them; edit actions must
+reference an id from the current canvas. Include only fields that apply to the action:
+move needs id, dx and dy; delete/select/front/back need id; clear/undo/redo need only kind.
+For visible paint, use hex colors: fill_color for a filled interior, color for a visible
+outline or text, and both when an object has both. Use stroke=false to hide an outline.
+Rectangle/ellipse need x,y,width,height with positive dimensions; a full-canvas backdrop
+is x=0,y=0,width=1000,height=650. Use polygon for silhouette corners; curve points are
+cubic controls. Filled shapes should provide fill and stroke explicitly when requested.
 Line uses two points. Rectangle/ellipse use x,y,width,height. Keep all geometry in bounds,
 usually inside x=35..965, y=30..620, except an intentional full-canvas background.
 A portrait needs a coherent head, neck and shoulders, paired eyes/brows, nose and mouth;
