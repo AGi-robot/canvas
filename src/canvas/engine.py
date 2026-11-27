@@ -1,6 +1,6 @@
 """Small, bounded drawing language shared with the Canvas page.
 
-The language is vector-first: an LLM (Grace) or any other client emits a list
+The language is vector-first: an LLM (AIVA) or any other client emits a list
 of actions, this module validates and normalises them, and `canvas.svg`
 renders them as SVG.  Extra action kinds (e.g. raster painting) can register
 themselves with `register_action_kind` - the core language stays free of them.
@@ -164,7 +164,7 @@ def build_draw_schema(action_limit=16, allow_paints=False, strict_geometry=True)
 
 
 DRAW_TOOL = build_draw_tool()
-DRAW_INSTRUCTIONS = '''You are Grace, creating finished art on a 1000×650 canvas with canvas_draw.
+DRAW_INSTRUCTIONS = '''You are AIVA, creating finished art on a 1000×650 canvas with canvas_draw.
 Plan the composition, palette and light source before drawing. Work back to front: background,
 distant forms, main silhouette, midtones, shadows, highlights and a few focal details. Use
 negative space, perspective, balanced proportions and a clear focal point. For paintings,

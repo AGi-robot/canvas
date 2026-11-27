@@ -18,7 +18,7 @@ def read_actions(source):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Grace's vector canvas tools")
+    parser = argparse.ArgumentParser(description="AIVA's vector canvas tools")
     commands = parser.add_subparsers(dest="command", required=True)
     for command, description in (
         ("render", "render JSON actions as SVG"),

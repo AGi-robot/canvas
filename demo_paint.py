@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""E2E demo: cosmos3-edge (Jetson) paints, grace-canvas (PC) renders.
+"""E2E demo: cosmos3-edge (Jetson) paints, aiva-canvas (PC) renders.
 
-Two passes, like Grace's real loop:
+Two passes, like AIVA's real loop:
   pass 1 - draft from the task text
   pass 2 - art review: the draft PNG is sent back as vision input and the
            model edits its own work (style/move/delete + additions)
@@ -179,7 +179,7 @@ def main():
         print("no draft actions - aborting")
         return 1
     draft_valid = engine.validate_actions(engine.repair_model_actions(draft))
-    draft_png = demo / "grace_drawing_draft.png"
+    draft_png = demo / "aiva_drawing_draft.png"
     render_png(draft_valid, draft_png)
     print(f"  wrote {draft_png.name}")
 
@@ -196,9 +196,9 @@ def main():
         engine.repair_model_actions(edits))
     harmonized = palette_mod.harmonize_actions(final, scheme='balanced')
 
-    out = render_png(harmonized, demo / "grace_drawing.png")
+    out = render_png(harmonized, demo / "aiva_drawing.png")
     print(f"wrote {out}")
-    raw = render_png(final, demo / "grace_drawing_raw.png")
+    raw = render_png(final, demo / "aiva_drawing_raw.png")
     print(f"wrote {raw} (no palette harmonization)")
     (demo / "actions.json").write_text(json.dumps(final, indent=1))
     return 0

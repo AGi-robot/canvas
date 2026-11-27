@@ -1,6 +1,6 @@
-# Grace Canvas
+# AIVA Canvas
 
-Python drawing language and SVG renderer used by Grace. This package is a
+Python drawing language and SVG renderer used by AIVA. This package is a
 library and command-line tool; it does not start a ROS node.
 
 ## Install
