@@ -1,4 +1,4 @@
-"""canvas - Grace's vector drawing engine.
+"""canvas - AIVA's vector drawing engine.
 
 The language: `canvas.engine` (validate/normalize actions)
 The output:  `canvas.svg` (replay actions into standalone SVG)
